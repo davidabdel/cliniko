@@ -1,0 +1,6 @@
+{
+  "name": "Cliniko-GHL Sync",
+  "description": "Two-way calendar synchronization between Cliniko and GoHighLevel via webhooks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
