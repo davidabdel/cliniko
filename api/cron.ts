@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { pollCliniko } from "../server";
+import { pollCliniko } from "../app";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
