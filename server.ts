@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import axios from "axios";
 import dotenv from "dotenv";
 import fs from "fs";
@@ -303,6 +302,8 @@ app.post("/webhook/ghl", async (req, res) => {
 // Vite middleware for development
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    // Dynamic import to prevent Vercel from bundling Vite into the serverless function
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
