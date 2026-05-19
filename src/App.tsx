@@ -178,7 +178,7 @@ export default function App() {
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-[11px] leading-normal text-gray-400 uppercase tracking-tight font-medium">
                       <div className="p-4 bg-[#0c0d0f] rounded-lg border border-gray-800 space-y-2 opacity-80">
                         <p className="text-white">1. Cliniko Polling</p>
-                        <p>Automatic sync every 60s. No webhook configuration needed in Cliniko settings.</p>
+                        <p>Triggered by Vercel Cron every 60s. State synced via Upstash Redis KV.</p>
                       </div>
                       <div className="p-4 bg-[#0c0d0f] rounded-lg border border-gray-800 space-y-2">
                         <p className="text-white">2. GHL Automation</p>
@@ -190,7 +190,7 @@ export default function App() {
             </div>
 
             <div className="p-4 border-t border-gray-800 bg-[#0f1115] flex items-center justify-between text-[10px] text-gray-500 uppercase tracking-widest font-bold">
-              <span>Sync Engine: Node.js</span>
+              <span>Sync Engine: Vercel Serverless</span>
               <button 
                 onClick={fetchStatus}
                 className="flex items-center gap-2 hover:text-white transition-colors"
@@ -204,7 +204,7 @@ export default function App() {
       </main>
 
       <footer className="h-10 border-t border-gray-800 flex items-center px-8 text-[10px] text-gray-600 shrink-0 mt-auto">
-        <div className="flex-1">Sync Engine: <span className="text-gray-400">Node.js / Express</span></div>
+        <div className="flex-1">Sync Engine: <span className="text-gray-400">Vercel Serverless / Node.js</span></div>
         <div className="hidden md:block font-mono text-gray-500 uppercase">deduplication_active=true | ttl=60000ms</div>
         <div className="flex-1 text-right">Connection: <span className="text-emerald-500">Secure HTTPS</span></div>
       </footer>

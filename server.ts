@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import axios from "axios";
 import dotenv from "dotenv";
 import fs from "fs";
+import { Redis } from "@upstash/redis";
 
 dotenv.config();
 
@@ -11,13 +12,23 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const STATE_FILE = path.join(process.cwd(), "state.json");
 
+// Setup Redis if Vercel KV is available
+const redis = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
+  ? new Redis({ url: process.env.KV_REST_API_URL, token: process.env.KV_REST_API_TOKEN })
+  : null;
+
 // State Management
 interface State {
   lastAppointmentPollTime: string | null;
   lastPatientPollTime: string | null;
 }
 
-function loadState(): State {
+async function loadState(): Promise<State> {
+  if (redis) {
+    const state = await redis.get<State>("app_state");
+    if (state) return state;
+    return { lastAppointmentPollTime: null, lastPatientPollTime: null };
+  }
   try {
     if (fs.existsSync(STATE_FILE)) {
       return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
@@ -28,7 +39,11 @@ function loadState(): State {
   return { lastAppointmentPollTime: null, lastPatientPollTime: null };
 }
 
-function saveState(state: State) {
+async function saveState(state: State) {
+  if (redis) {
+    await redis.set("app_state", state);
+    return;
+  }
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   } catch (err) {
@@ -36,19 +51,25 @@ function saveState(state: State) {
   }
 }
 
-// In-memory sync loop prevention
+// Sync loop prevention
 class Deduplicator {
+  private expiryTime = 60; // seconds
   private syncedIds = new Set<string>();
-  private expiryTime = 60 * 1000; // 60 seconds
 
-  add(id: string) {
-    this.syncedIds.add(id);
-    setTimeout(() => {
-      this.syncedIds.delete(id);
-    }, this.expiryTime);
+  async add(id: string) {
+    if (redis) {
+      await redis.setex(`dedup:${id}`, this.expiryTime, "1");
+    } else {
+      this.syncedIds.add(id);
+      setTimeout(() => this.syncedIds.delete(id), this.expiryTime * 1000);
+    }
   }
 
-  has(id: string): boolean {
+  async has(id: string): Promise<boolean> {
+    if (redis) {
+      const val = await redis.get(`dedup:${id}`);
+      return !!val;
+    }
     return this.syncedIds.has(id);
   }
 }
@@ -58,8 +79,8 @@ const deduplicator = new Deduplicator();
 app.use(express.json());
 
 // Health endpoint
-app.get("/api/health", (req, res) => {
-  const state = loadState();
+app.get("/api/health", async (req, res) => {
+  const state = await loadState();
   res.json({ 
     status: "ok", 
     timestamp: new Date().toISOString(),
@@ -91,7 +112,7 @@ const ghlApi = axios.create({
  */
 async function syncClinikoPatientToGHL(patient: any) {
   const patientSyncId = `cl_p_${patient.id}`;
-  if (deduplicator.has(patientSyncId)) return null;
+  if (await deduplicator.has(patientSyncId)) return null;
 
   if (!patient.email) return null;
 
@@ -116,7 +137,7 @@ async function syncClinikoPatientToGHL(patient: any) {
       contactId = createRes.data.contact.id;
     }
 
-    deduplicator.add(patientSyncId);
+    await deduplicator.add(patientSyncId);
     return contactId;
   } catch (err: any) {
     console.error(`Sync Cliniko -> GHL Patient Error: ${err.message}`);
@@ -129,7 +150,7 @@ async function syncClinikoPatientToGHL(patient: any) {
  */
 async function syncGHLContactToCliniko(contact: any) {
   const contactSyncId = `ghl_c_${contact.id}`;
-  if (deduplicator.has(contactSyncId)) return null;
+  if (await deduplicator.has(contactSyncId)) return null;
 
   if (!contact.email) return null;
 
@@ -153,7 +174,7 @@ async function syncGHLContactToCliniko(contact: any) {
       patientId = createRes.data.id;
     }
 
-    deduplicator.add(contactSyncId);
+    await deduplicator.add(contactSyncId);
     return patientId;
   } catch (err: any) {
     console.error(`Sync GHL -> Cliniko Patient Error: ${err.message}`);
@@ -165,7 +186,7 @@ async function syncGHLContactToCliniko(contact: any) {
  * Cliniko Pollers
  */
 async function pollCliniko() {
-  const state = loadState();
+  const state = await loadState();
   const now = new Date().toISOString();
 
   // 1. Poll Appointments
@@ -179,7 +200,7 @@ async function pollCliniko() {
 
     for (const appt of appointments) {
       const syncId = `cl_a_${appt.id}`;
-      if (deduplicator.has(syncId)) continue;
+      if (await deduplicator.has(syncId)) continue;
       if (appt.deleted_at) continue; // Basic handling
 
       // Get patient details for GHL
@@ -196,7 +217,7 @@ async function pollCliniko() {
           title: appt.appointment_type.name,
           description: `Cliniko ID: ${appt.id}`
         });
-        deduplicator.add(syncId);
+        await deduplicator.add(syncId);
       }
     }
     state.lastAppointmentPollTime = now;
@@ -221,7 +242,7 @@ async function pollCliniko() {
     console.warn("Cliniko Patients Poll Error:", err.message);
   }
 
-  saveState(state);
+  await saveState(state);
 }
 
 /**
@@ -234,7 +255,7 @@ app.post("/webhook/ghl", async (req, res) => {
     // Case 1: Calendar Event (Created/Updated/Cancelled)
     if (payload.calendarId || payload.startTime) {
       const ghlEventId = `ghl_e_${payload.id}`;
-      if (deduplicator.has(ghlEventId)) return res.status(200).send("Duplicate");
+      if (await deduplicator.has(ghlEventId)) return res.status(200).send("Duplicate");
 
       if (payload.status === "cancelled") {
         console.log(`GHL Event Cancelled: ${payload.id}`);
@@ -256,7 +277,7 @@ app.post("/webhook/ghl", async (req, res) => {
         });
 
         if (patientId) {
-          deduplicator.add(ghlEventId);
+          await deduplicator.add(ghlEventId);
           await clinikoApi.post("/appointments", {
             patient_id: patientId,
             appointment_type_id: typeMatch.id,
@@ -303,4 +324,8 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export { app, pollCliniko };
